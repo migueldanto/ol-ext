@@ -21,18 +21,18 @@ import '../layer/GetPreview';
  * @fires capabilities
  * @extends {ol_control_Button}
  * @param {*} options
- *  @param {string|Element} options.target the target to set the dialog, use document.body to have fullwindow dialog
- *  @param {string} options.proxy proxy to use when requesting Getcapabilites, default none (suppose the service use CORS)
- *  @param {string} options.placeholder input placeholder, default 'service url...'
- *  @param {string} options.title dialog title, default 'WMS'
- *  @param {string} options.searchLabel Label for search button, default 'search'
- *  @param {string} options.loadLabel Label for load button, default 'load'
- *  @param {boolean} options.popupLayer Use a popup for the layers, default false
- *  @param {*} options.services a key/url object of services for quick access in a menu
- *  @param {Array<string>} options.srs an array of supported srs, default map projection code or 'EPSG:3857'
- *  @param {number} options.timeout Timeout for getCapabilities request, default 1000
- *  @param {boolean} options.cors Use CORS, default false
- *  @param {boolean} options.trace Log layer info, default false
+ *  @param {string|Element} [options.target] the target to set the dialog, use document.body to have fullwindow dialog
+ *  @param {string} [options.proxy] proxy to use when requesting Getcapabilites, default none (suppose the service use CORS)
+ *  @param {string} [options.placeholder='service url...'] input placeholder, default 'service url...'
+ *  @param {string} [options.title=WMS] dialog title, default 'WMS'
+ *  @param {string} [options.searchLabel='search'] Label for search button, default 'search'
+ *  @param {string} [options.loadLabel='load'] Label for load button, default 'load'
+ *  @param {Array<string>} [options.srs] an array of supported srs, default map projection code or 'EPSG:3857'
+ *  @param {number} [options.timeout=1000] Timeout for getCapabilities request, default 1000
+ *  @param {boolean} [options.cors=false] Use CORS, default false
+ *  @param {string} [options.optional] a list of optional url properties (when set in the request url), separated with ','
+ *  @param {boolean} [options.trace=false] Log layer info, default false
+ *  @param {*} [options.services] a key/url object of services for quick access in a menu
  */
 var ol_control_WMSCapabilities = function (options) {
   options = options || {};
@@ -57,6 +57,7 @@ var ol_control_WMSCapabilities = function (options) {
   this.set('trace', options.trace);
   this.set('title', options.title);
   this.set('loadLabel', options.loadLabel);
+  this.set('optional', options.optional);
 
   // Dialog
   this.createDialog(options);
@@ -96,6 +97,13 @@ var ol_control_WMSCapabilities = function (options) {
   this._ajax.on('loadend', function() {
     this._elements.element.classList.remove('ol-searching');
   }.bind(this));
+
+  // Load a layer
+  if (options.onselect) {
+    this.on('load', function(e) { 
+      options.onselect(e.layer, e.options); 
+    });
+  }
 };
 ol_ext_inherits(ol_control_WMSCapabilities, ol_control_Button);
 
@@ -132,7 +140,7 @@ ol_control_WMSCapabilities.prototype.labels = {
   formProjection: 'Projection:',
   formCrossOrigin: 'CrossOrigin:',
   formVersion: 'Version:',
-  formAttribution: 'Attribution:'
+  formAttribution: 'Attribution:',
 };
 
 /** Create dialog
@@ -293,7 +301,7 @@ ol_control_WMSCapabilities.prototype.createDialog = function (options) {
       this._elements[label] = ol_ext_element.create('INPUT', {
         value: (val===undefined ? '' : val),
         placeholder: pholder || '',
-        type: typeof(val),
+        type: typeof(val)==='number' ? 'number' : 'text',
         parent: li
       });
     }
@@ -450,6 +458,7 @@ ol_control_WMSCapabilities.prototype.getCapabilities = function(url, options) {
   url = url.split('?');
   var search = url[1];
   url = url[0];
+
   // reset
   this._elements.formMap.value = '';
   this._elements.formLayer.value = '';
@@ -458,6 +467,7 @@ ol_control_WMSCapabilities.prototype.getCapabilities = function(url, options) {
   this._elements.formProjection.value = this.getMap().getView().getProjection().getCode();
   this._elements.formFormat.selectedIndex = 0;
   var map = options.map || '';
+  var optional = {};
   if (search) {
     search = search.replace(/^\?/,'').split('&');
     search.forEach(function(s) {
@@ -485,16 +495,34 @@ ol_control_WMSCapabilities.prototype.getCapabilities = function(url, options) {
           }
         }
       }
+      // Check optionals
+      if (this.get('optional')) {
+        this.get('optional').split(',').forEach(function(o) {
+          if (o === s[0]) {
+            optional[o] = s[1];
+          }
+        }.bind(this))
+      }
     }.bind(this))
   }
 
+  // Get request params
+  var request = this.getRequestParam(options);
+  var opt = [];
+  if (map) {
+    request.MAP = map;
+    opt.push('map='+map);
+  }
+  for (var o in optional) {
+    request[o] = optional[o];
+    opt.push(o+'='+optional[o]);
+  }
+
   // Fill form
-  this._elements.input.value = (url || '') + (map ? '?map='+map : '');
+  this._elements.input.value = (url || '') + (opt ? '?'+opt.join('&') : '');
   this.clearForm();
 
-  var request = this.getRequestParam(options);
-  if (map) request.MAP = map;
-
+  // Sen drequest
   if (this._proxy) {
     var q = '';
     for (var r in request) q += (q?'&':'')+r+'='+request[r];
@@ -543,7 +571,6 @@ ol_control_WMSCapabilities.prototype.clearForm = function() {
  * @param {*} caps JSON capabilities
  */
 ol_control_WMSCapabilities.prototype.showCapabilities = function(caps) {
-  console.log(caps)
   this._elements.result.classList.add('ol-visible')
 //  console.log(caps)
   var list = [];
@@ -832,7 +859,7 @@ ol_control_WMSCapabilities.prototype._getFormOptions = function() {
       title: this._elements.formTitle.value
     }
   }
-  if (this._elements.formMap.value) options.source.param.MAP = this._elements.formMap.value;
+  if (this._elements.formMap.value) options.source.params.MAP = this._elements.formMap.value;
   return options;
 };
 

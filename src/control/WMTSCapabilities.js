@@ -16,18 +16,18 @@ import { getWidth as ol_extent_getWidth } from 'ol/extent'
  * @fires capabilities
  * @extends {ol_control_WMSCapabilities}
  * @param {*} options
- *  @param {string|Element} options.target the target to set the dialog, use document.body to have fullwindow dialog
- *  @param {string} options.proxy proxy to use when requesting Getcapabilites, default none (suppose the service use CORS)
- *  @param {string} options.placeholder input placeholder, default 'service url...'
- *  @param {string} options.title dialog title, default 'WMS'
- *  @param {string} options.searchLabel Label for search button, default 'search'
- *  @param {string} options.loadLabel Label for load button, default 'load'
- *  @param {boolean} options.popupLayer Use a popup for the layers, default false
- *  @param {*} options.services a key/url object of services for quick access in a menu
- *  @param {Array<string>} options.srs an array of supported srs, default map projection code or 'EPSG:3857'
- *  @param {number} options.timeout Timeout for getCapabilities request, default 1000
- *  @param {boolean} options.cors Use CORS, default false
- *  @param {boolean} options.trace Log layer info, default false
+ *  @param {string|Element} [options.target] the target to set the dialog, use document.body to have fullwindow dialog
+ *  @param {string} [options.proxy] proxy to use when requesting Getcapabilites, default none (suppose the service use CORS)
+ *  @param {string} [options.placeholder='service url...'] input placeholder, default 'service url...'
+ *  @param {string} [options.title=WMTS] dialog title, default 'WMTS'
+ *  @param {string} [options.searchLabel='search'] Label for search button, default 'search'
+ *  @param {string} [options.loadLabel='load'] Label for load button, default 'load'
+ *  @param {Array<string>} [options.srs] an array of supported srs, default map projection code or 'EPSG:3857'
+ *  @param {number} [options.timeout=1000] Timeout for getCapabilities request, default 1000
+ *  @param {boolean} [options.cors=false] Use CORS, default false
+ *  @param {string} [options.optional] a list of optional url properties (when set in the request url), separated with ','
+ *  @param {boolean} [options.trace=false] Log layer info, default false
+ *  @param {*} [options.services] a key/url object of services for quick access in a menu
  */
 var ol_control_WMTSCapabilities = function (options) {
   options = options || {};
@@ -82,12 +82,12 @@ ol_control_WMTSCapabilities.prototype.getRequestParam = function(options) {
  * @returns {*}
  * @private
  */
-ol_control_WMTSCapabilities.prototype._getTG = function(tileMatrixSet, minZoom, maxZoom) {
+ol_control_WMTSCapabilities.prototype._getTG = function(tileMatrixSet, minZoom, maxZoom, tilePrefix) {
   var matrixIds = new Array();
   var resolutions = new Array();
   var size = ol_extent_getWidth(ol_proj_get('EPSG:3857').getExtent()) / 256;
   for (var z=0; z <= (maxZoom ? maxZoom : 20) ; z++) {
-    var id = tileMatrixSet !== 'PM' ? tileMatrixSet+':'+z : z;
+    var id = tilePrefix ? tileMatrixSet+':'+z : z;
     matrixIds[z] = id ; 
     resolutions[z] = size / Math.pow(2, z);
   }
@@ -103,11 +103,12 @@ ol_control_WMTSCapabilities.prototype._getTG = function(tileMatrixSet, minZoom, 
  * @param {sting} tileMatrixSet
  * @param {number} minZoom
  * @param {number} maxZoom
+ * @param {boolean} tilePrefix
  * @returns {ol_tilegrid_WMTS}
  * @private
  */
-ol_control_WMTSCapabilities.prototype.getTileGrid = function(tileMatrixSet, minZoom, maxZoom) {
-  return new ol_tilegrid_WMTS(this._getTG(tileMatrixSet, minZoom, maxZoom));
+ol_control_WMTSCapabilities.prototype.getTileGrid = function(tileMatrixSet, minZoom, maxZoom, tilePrefix) {
+  return new ol_tilegrid_WMTS(this._getTG(tileMatrixSet, minZoom, maxZoom, tilePrefix));
 };
 
 /** Return a WMTS options for the given capabilities
@@ -132,6 +133,7 @@ ol_control_WMTSCapabilities.prototype.getOptionsFromCap = function(caps, parent)
     this.showError({ type: 'TileMatrix' });
     return;
   }
+  var tilePrefix = tmatrix.TileMatrixSetLimits[0].TileMatrix.split(':').length > 1;
   tmatrix.TileMatrixSetLimits.forEach(function(tm) {
     var zoom = tm.TileMatrix.split(':').pop();
     minZoom = Math.min(minZoom, parseInt(zoom));
@@ -154,6 +156,7 @@ ol_control_WMTSCapabilities.prototype.getOptionsFromCap = function(caps, parent)
     format: caps.Format[0] || 'image/jpeg',
     projection: 'EPSG:3857',
     //tileGrid: tg,
+    tilePrefix: tilePrefix,
     minZoom: minZoom,
     maxZoom: maxZoom,
     style: caps.Style ? caps.Style[0].Identifier : 'normal',
@@ -182,7 +185,7 @@ ol_control_WMTSCapabilities.prototype.getOptionsFromCap = function(caps, parent)
     source_opt.tileGrid = 'TILEGRID';
     var tso = JSON.stringify([ source_opt ], null, "\t").replace(/\\"/g,'"');
     tso = tso.replace('"TILEGRID"', 'new ol_tilegrid_WMTS('
-      + JSON.stringify(this._getTG(source_opt.matrixSet, source_opt.minZoom, source_opt.maxZoom), null, '\t').replace(/\n/g, '\n\t\t')
+      + JSON.stringify(this._getTG(source_opt.matrixSet, source_opt.minZoom, source_opt.maxZoom, source_opt.tilePrefix), null, '\t').replace(/\n/g, '\n\t\t')
       + ')'
     );
     delete source_opt.tileGrid;
@@ -199,13 +202,16 @@ ol_control_WMTSCapabilities.prototype.getOptionsFromCap = function(caps, parent)
     console.log(t);
     delete layer_opt.source;
   }
+  var returnedLegend=undefined;
+  if(caps.Style && caps.Style[0] && caps.Style[0].LegendURL && caps.Style[0].LegendURL[0] )
+    returnedLegend=caps.Style[0].LegendURL[0].href;
   return ({ 
     layer: layer_opt, 
     source: source_opt,
     data: {
       title: caps.Title,
       abstract: caps.Abstract,
-      legend: caps.Style ? [ caps.Style[0].LegendURL[0].href ] : undefined,
+      legend: returnedLegend,
     } 
   });
 };
@@ -275,7 +281,7 @@ ol_control_WMTSCapabilities.prototype._getFormOptions = function() {
  */
 ol_control_WMTSCapabilities.prototype.getLayerFromOptions = function (options) {
   if (!options) return;
-  options.source.tileGrid = this.getTileGrid(options.source.matrixSet, options.source.minZoom, options.source.maxZoom);
+  options.source.tileGrid = this.getTileGrid(options.source.matrixSet, options.source.minZoom, options.source.maxZoom, options.source.tilePrefix);
   options.layer.source = new ol_source_WMTS(options.source);
   var layer = new ol_layer_Tile(options.layer);
   // Restore options

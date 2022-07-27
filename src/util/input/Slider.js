@@ -7,8 +7,9 @@ import ol_ext_input_Base from './Base'
  * @extends {ol_ext_input_Base}
  * @param {*} options
  *  @param {string} [options.className]
- *  @param {Element} [options.input] input element, if non create one
- *  @param {Element} [options.parent] parent element, if create an input
+ *  @param {Element} [options.input] input element, if non create one (use parent to tell where)
+ *  @param {Element} [options.parent] element to use as parent if no input option
+ *  @param {booelan} [options.hover=true] show popup on hover
  *  @param {string} [options.align=left] align popup left/right
  *  @param {string} [options.type] a slide type as 'size'
  *  @param {number} [options.min] min value, default use input min
@@ -27,6 +28,7 @@ var ol_ext_input_Slider = function(options) {
 
   this.element = ol_ext_element.create('DIV', {
     className: 'ol-input-slider' 
+      + (options.hover !== false ? ' ol-hover' : '')
       + (options.type ? ' ol-' + options.type : '')
       + (options.className ? ' ' + options.className : '')
   });
@@ -75,12 +77,13 @@ var ol_ext_input_Slider = function(options) {
   var min = (options.min !== undefined) ? options.min : parseFloat(input.min) || 0;
   var max = (options.max !== undefined) ? options.max : parseFloat(input.max) || 1;
   var step = (options.step !== undefined) ? options.step : parseFloat(input.step) || 1;
-
+  var dstep = 1/step;
+  
   // Handle popup drag
   this._listenDrag(slider, function(e) {
     var tx = Math.max(0, Math.min(e.offsetX / slider.clientWidth, 1));
     cursor.style.left = Math.max(0, Math.min(100, Math.round(tx*100) )) + '%';
-    var v = input.value = Math.round((tx * (max - min) + min) / step) * step;
+    var v = input.value = Math.round((tx * (max - min) + min) * dstep) / dstep;
     this.dispatchEvent({ type: 'change:value', value: v });
   }.bind(this));
 

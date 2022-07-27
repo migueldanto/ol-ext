@@ -23,14 +23,15 @@ popup.hide();
 * @fires show
 * @fires hide
 * @param {} options Extend Overlay options 
-*	 @param {String} options.popupClass the a class of the overlay to style the popup.
-*	 @param {boolean} options.anim Animate the popup the popup, default false.
-*	 @param {bool} options.closeBox popup has a close box, default false.
-*	 @param {function|undefined} options.onclose: callback function when popup is closed
-*	 @param {function|undefined} options.onshow callback function when popup is shown
-*	 @param {Number|Array<number>} options.offsetBox an offset box
+*	 @param {String} [options.popupClass] the a class of the overlay to style the popup.
+*	 @param {boolean} [options.anim Animate=false] the popup the popup, default false.
+*	 @param {bool} [options.closeBox=false] popup has a close box, default false.
+*	 @param {function|undefined} [options.onclose] callback function when popup is closed
+*	 @param {function|undefined} [options.onshow] callback function when popup is shown
+*	 @param {Number|Array<number>} [options.offsetBox] an offset box
 *	 @param {ol.OverlayPositioning | string | undefined} options.positioning 
 *		the 'auto' positioning var the popup choose its positioning to stay on the map.
+*	 @param {boolean} [options.minibar=false] add a mini vertical bar
 * @api stable
 */
 var ol_Overlay_Popup = function (options) {
@@ -64,11 +65,18 @@ var ol_Overlay_Popup = function (options) {
   }
 
   // Content
-  this.content = ol_ext_element.create("div", { 
+  this.content = ol_ext_element.create('DIV', { 
     html: options.html || '',
     className: "ol-popup-content",
     parent: element
   });
+  if (options.minibar) {
+    ol_ext_element.scrollDiv(this.content, {
+      vertical: true,
+      mousewheel: true,
+      minibar: true
+    });
+  }
 
   // Stop event
   if (options.stopEvent) {
@@ -240,17 +248,21 @@ ol_Overlay_Popup.prototype.show = function (coordinate, html) {
   if (html && html !== this.prevHTML) {
     // Prevent flickering effect
     this.prevHTML = html;
-    this.content.innerHTML = "";
+    this.content.innerHTML = '';
     if (html instanceof Element) {
       this.content.appendChild(html);
     } else {
-      this.content.insertAdjacentHTML('beforeend', html);
+      ol_ext_element.create('DIV', {
+        html: html,
+        parent: this.content
+      })
     }
     // Refresh when loaded (img)
     Array.prototype.slice.call(this.content.querySelectorAll('img'))
       .forEach(function(image) {
-        image.addEventListener("load", function() {
+        image.addEventListener('load', function() {
           try { map.renderSync(); } catch(e) { /* ok */ }
+          self.content.dispatchEvent(new Event('scroll'));
         });
       });
   }

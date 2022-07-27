@@ -163,7 +163,8 @@
     target: 'map',
     view: new ol.View ({
       zoom: 6,
-      center: [173664, 6166327]
+      center: [173664, 6166327],
+      padding: [0,0,0,210]
     }),
     layers: [stamen]
   });
@@ -174,8 +175,9 @@
 
   // The storymap
   var story = new ol.control.Storymap({
-    html: document.getElementById('story')
+    html: document.getElementById('story'),
     //target: document.getElementById('story')
+    minibar: true
   });
 
   // Show image fullscreen on click

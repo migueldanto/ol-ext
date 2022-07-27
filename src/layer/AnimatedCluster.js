@@ -12,6 +12,7 @@ import {easeOut as ol_easing_easeOut} from 'ol/easing'
 import {buffer as ol_extent_buffer} from 'ol/extent'
 import ol_geom_Point from 'ol/geom/Point'
 import ol_render_getVectorContext from '../util/getVectorContext';
+import ol_ext_getVectorContextStyle from '../util/getVectorContextStyle'
 
 /**
  *  A vector layer for animated cluster
@@ -92,6 +93,7 @@ ol_layer_AnimatedCluster.prototype.animate = function(e) {
   var duration = this.get('animationDuration');
   if (!duration) return;
   var resolution = e.frameState.viewState.resolution;
+  // var ratio = e.frameState.pixelRatio;
   var i, c0, a = this.animation;
   var time = e.frameState.time;
 
@@ -207,10 +209,10 @@ ol_layer_AnimatedCluster.prototype.animate = function(e) {
             s2.getText().setOffsetX(offsetX - Math.sin(rot)*fontSize*(i - dl));
             s2.getText().setOffsetY(offsetY + Math.cos(rot)*fontSize*(i - dl));
             s2.getText().setText(t);
-            vectorContext.drawFeature(f, s2);
+            vectorContext.drawFeature(f, ol_ext_getVectorContextStyle(e, s2));
           });
         } else {
-          vectorContext.drawFeature(f, s);
+          vectorContext.drawFeature(f, ol_ext_getVectorContextStyle(e, s));
         }
         /* OLD VERSION OL < 4.3
         // Retina device

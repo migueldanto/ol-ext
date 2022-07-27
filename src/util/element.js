@@ -16,7 +16,8 @@ var ol_ext_element = {};
  * @param {*} options
  *  @param {string} options.className className The element class name 
  *  @param {Element} options.parent Parent to append the element as child
- *  @param {Element|string} options.html Content of the element
+ *  @param {Element|string} [options.html] Content of the element (if text is not set)
+ *  @param {string} [options.text] Text content (if html is not set)
  *  @param {Element|string} [options.options] when tagName = SELECT a list of options as key:value to add to the select
  *  @param {string} options.* Any other attribut to add to the element
  */
@@ -37,6 +38,10 @@ ol_ext_element.create = function (tagName, options) {
           if (options.className && options.className.trim) elt.setAttribute('class', options.className.trim());
           break;
         }
+        case 'text': {
+          elt.innerText = options.text;
+          break;
+        }
         case 'html': {
           if (options.html instanceof Element) elt.appendChild(options.html)
           else if (options.html!==undefined) elt.innerHTML = options.html;
@@ -47,7 +52,6 @@ ol_ext_element.create = function (tagName, options) {
           break;
         }
         case 'options': {
-          console.log('options', options.options)
           if (/select/i.test(tagName)) {
             for (var i in options.options) {
               ol_ext_element.create('OPTION', {
@@ -60,7 +64,7 @@ ol_ext_element.create = function (tagName, options) {
           break;
         }
         case 'style': {
-          this.setStyle(elt, options.style);
+          ol_ext_element.setStyle(elt, options.style);
           break;
         }
         case 'change':
@@ -102,6 +106,8 @@ ol_ext_element.createSwitch = function (options) {
   var input = ol_ext_element.create('INPUT', {
     type: 'checkbox',
     on: options.on,
+    click: options.click,
+    change: options.change,
     parent: options.parent
   });
   var opt = Object.assign ({ input: input }, options || {});
@@ -128,7 +134,6 @@ ol_ext_element.createCheck = function (options) {
     on: options.on,
     parent: options.parent
   });
-  console.log(input)
   var opt = Object.assign ({ input: input }, options || {});
   if (options.type === 'radio') {
     new ol_ext_input_Radio(opt);
@@ -310,43 +315,135 @@ ol_ext_element.offsetRect = function(elt) {
   }
 };
 
+/** Get element offset 
+ * @param {ELement} elt
+ * @returns {Object} top/left offset
+ */
+ol_ext_element.getFixedOffset = function(elt) {
+  var offset = {
+    left:0,
+    top:0
+  };
+  var getOffset = function(parent) {
+    if (!parent) return offset;
+    // Check position when transform
+    if (ol_ext_element.getStyle(parent, 'position') === 'absolute'
+      && ol_ext_element.getStyle(parent, 'transform') !== "none") {
+      var r = parent.getBoundingClientRect();
+      offset.left += r.left; 
+      offset.top += r.top; 
+      return offset;
+    }
+    return getOffset(parent.offsetParent)
+  }
+  return getOffset(elt.offsetParent)
+};
+
+/** Get element offset rect
+ * @param {DOMElement} elt
+ * @param {boolean} fixed get fixed position
+ * @return {Object} 
+ */
+ol_ext_element.positionRect = function(elt, fixed) {
+  var gleft = 0;
+  var gtop = 0;
+
+  var getRect = function( parent ) {
+    if (parent) {
+      gleft += parent.offsetLeft;
+      gtop += parent.offsetTop;
+      return getRect(parent.offsetParent);
+    } else {
+      var r = {
+        top: elt.offsetTop + gtop,
+        left: elt.offsetLeft + gleft
+      };
+      if (fixed) {
+        r.top -= (window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0);
+        r.left -= (window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0);
+      }
+      r.bottom = r.top + elt.offsetHeight;
+      r.right = r.top + elt.offsetWidth;
+      return r;
+    }
+  }; 
+  return getRect(elt.offsetParent);
+}
+
 /** Make a div scrollable without scrollbar.
  * On touch devices the default behavior is preserved
  * @param {DOMElement} elt
  * @param {*} options
- *  @param {function} options.onmove a function that takes a boolean indicating that the div is scrolling
+ *  @param {function} [options.onmove] a function that takes a boolean indicating that the div is scrolling
  *  @param {boolean} [options.vertical=false] 
  *  @param {boolean} [options.animate=true] add kinetic to scroll
+ *  @param {boolean} [options.mousewheel=false] enable mousewheel to scroll
+ *  @param {boolean} [options.minibar=false] add a mini scrollbar to the parent element (only vertical scrolling)
+ * @returns {Object} an object with a refresh function
  */
 ol_ext_element.scrollDiv = function(elt, options) {
+  options = options || {};
   var pos = false;
   var speed = 0;
   var d, dt = 0;
 
   var onmove = (typeof(options.onmove) === 'function' ? options.onmove : function(){});
-  var page = options.vertical ? 'pageY' : 'pageX';
+  //var page = options.vertical ? 'pageY' : 'pageX';
+  var page = options.vertical ? 'screenY' : 'screenX';
   var scroll = options.vertical ? 'scrollTop' : 'scrollLeft';
   var moving = false;
+  // Factor scale content / container
+  var scale, isbar;
 
-  // Prevent image dragging
-  elt.querySelectorAll('img').forEach(function(i) {
-    i.ondragstart = function(){ return false; };
-  });
-  elt.style['touch-action'] = 'none';
+  // Update the minibar
+  var updateCounter = 0;
+  var updateMinibar = function() {
+    if (scrollbar) {
+      updateCounter++;
+      setTimeout(updateMinibarDelay);
+    }
+  }
+  var updateMinibarDelay = function() {
+    if (scrollbar) {
+      updateCounter--;
+      // Prevent multi call
+      if (updateCounter) return;
+      // Container height
+      var pheight = elt.clientHeight;
+      // Content height
+      var height = elt.scrollHeight;
+      // Set scrollbar value
+      scale = pheight / height;
+      scrollbar.style.height = scale * 100 + '%';
+      scrollbar.style.top = (elt.scrollTop / height * 100) + '%';
+      scrollContainer.style.height = pheight + 'px';
+      // No scroll
+      if (pheight > height - .5) scrollContainer.classList.add('ol-100pc');
+      else scrollContainer.classList.remove('ol-100pc');
+    }
+  }
   
-  // Start scrolling
-  ol_ext_element.addListener(elt, ['pointerdown'], function(e) {
+  // Handle pointer down
+  var onPointerDown = function(e) {
+    // Prevent scroll
+    if (e.target.classList.contains('ol-noscroll')) return;
+    // Start scrolling
     moving = false;
     pos = e[page];
     dt = new Date();
     elt.classList.add('ol-move');
-  });
-  
+    // Prevent elt dragging
+    e.preventDefault();
+    // Listen scroll
+    window.addEventListener('pointermove', onPointerMove);
+    ol_ext_element.addListener(window, ['pointerup','pointercancel'], onPointerUp);
+  }
+
   // Register scroll
-  ol_ext_element.addListener(window, ['pointermove'], function(e) {
+  var onPointerMove = function(e) {
     moving = true;
     if (pos !== false) {
-      var delta = pos - e[page];
+      var delta = (isbar ? -1/scale : 1) * (pos - e[page]);
       elt[scroll] += delta;
       d = new Date();
       if (d-dt) {
@@ -357,7 +454,7 @@ ol_ext_element.scrollDiv = function(elt, options) {
       // Tell we are moving
       if (delta) onmove(true);
     }
-  });
+  };
   
   // Animate scroll
   var animate = function(to) {
@@ -375,11 +472,76 @@ ol_ext_element.scrollDiv = function(elt, options) {
       }, 40);
     }
   }
+  
+  // Initialize scroll container for minibar
+  var scrollContainer, scrollbar;
+  if (options.vertical && options.minibar) {
+    var init = function(b) {
+      // only once
+      elt.removeEventListener('pointermove', init);
+      elt.parentNode.classList.add('ol-miniscroll');
+      scrollbar = ol_ext_element.create('DIV');
+      scrollContainer = ol_ext_element.create('DIV', {
+        className: 'ol-scroll',
+        html: scrollbar
+      });
+      elt.parentNode.insertBefore(scrollContainer, elt);
+      // Move scrollbar
+      scrollbar.addEventListener('pointerdown', function(e) {
+        isbar = true;
+        onPointerDown(e)
+      });
+      // Handle mousewheel
+      if (options.mousewheel) {
+        ol_ext_element.addListener(scrollContainer, 
+          ['mousewheel', 'DOMMouseScroll', 'onmousewheel'], 
+          function(e) { onMouseWheel(e) }
+        );
+        ol_ext_element.addListener(scrollbar, 
+          ['mousewheel', 'DOMMouseScroll', 'onmousewheel'], 
+          function(e) { onMouseWheel(e) }
+        );
+      }
+      // Update on enter
+      elt.parentNode.addEventListener('pointerenter', updateMinibar);
+      // Update on resize
+      window.addEventListener('resize', updateMinibar);
+      // Update
+      if (b!==false) updateMinibar();
+    };
+    // Allready inserted in the DOM
+    if (elt.parentNode) init(false);
+    // or wait when ready
+    else elt.addEventListener('pointermove', init);
+    // Update on scroll
+    elt.addEventListener('scroll', function() {
+      updateMinibar();
+    });
+  }
+
+  // Enable scroll
+  elt.style['touch-action'] = 'none';
+  elt.style['overflow'] = 'hidden';
+  elt.classList.add('ol-scrolldiv');
+  
+  // Start scrolling
+  ol_ext_element.addListener(elt, ['pointerdown'], function(e) {
+    isbar = false;
+    onPointerDown(e)
+  });
+
+  // Prevet click when moving...
+  elt.addEventListener('click', function(e) {
+    if (elt.classList.contains('ol-move')) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
 
   // Stop scrolling
-  ol_ext_element.addListener(window, ['pointerup','pointercancel'], function(e) {
+  var onPointerUp = function(e) {
     dt = new Date() - dt;
-    if (dt>100) {
+    if (dt>100 || isbar) {
       // User stop: no speed
       speed = 0;
     } else if (dt>0) {
@@ -390,27 +552,42 @@ ol_ext_element.scrollDiv = function(elt, options) {
     pos = false;
     speed = 0;
     dt = 0;
-  });
+    // Add class to handle click (on iframe / double-click)
+    if (!elt.classList.contains('ol-move')) {
+      elt.classList.add('ol-hasClick')
+      setTimeout(function() { elt.classList.remove('ol-hasClick'); }, 500);
+    } else {
+      elt.classList.remove('ol-hasClick');
+    }
+    isbar = false;
+    window.removeEventListener('pointermove', onPointerMove)
+    ol_ext_element.removeListener(window, ['pointerup','pointercancel'], onPointerUp);
+  };
 
   // Handle mousewheel
+  var onMouseWheel = function(e) {
+    var delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
+    elt.classList.add('ol-move');
+    elt[scroll] -= delta*30;
+    elt.classList.remove('ol-move');
+    return false;
+  }
   if (options.mousewheel) { // && !elt.classList.contains('ol-touch')) {
     ol_ext_element.addListener(elt, 
       ['mousewheel', 'DOMMouseScroll', 'onmousewheel'], 
-      function(e) {
-        var delta = Math.max(-1, Math.min(1, (e.wheelDelta || -e.detail)));
-        elt.classList.add('ol-move');
-        elt[scroll] -= delta*30;
-        elt.classList.remove('ol-move');
-        return false;
-      }
+      onMouseWheel
     );
+  }
+
+  return { 
+    refresh: updateMinibar
   }
 };
 
 /** Dispatch an event to an Element 
  * @param {string} eventName
  * @param {Element} element
-*/
+ */
 ol_ext_element.dispatchEvent = function (eventName, element) {
   var event;
   try {

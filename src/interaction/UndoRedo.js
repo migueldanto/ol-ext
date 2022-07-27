@@ -15,6 +15,7 @@ import '../source/Vector'
  * @fires change:clear
  * @param {Object} options
  *  @param {number=} options.maxLength max undo stack length (0=Infinity), default Infinity
+ *  @param {Array<ol.Layer>} options.layers array of layers to undo/redo
  */
 var ol_interaction_UndoRedo = function(options) {
   if (!options) options = {};
@@ -24,6 +25,9 @@ var ol_interaction_UndoRedo = function(options) {
       return true; 
     }
   });
+
+  //array of layers to undo/redo
+  this._layers = options.layers
 
   this._undoStack = new ol_Collection();
   this._redoStack = new ol_Collection();
@@ -228,13 +232,17 @@ ol_interaction_UndoRedo.prototype._watchSources = function() {
     this._sourceListener.forEach(function(l) { ol_Observable_unByKey(l); })
   }
   this._sourceListener = [];
+  
+  var self = this;
 
   // Ges vector layers 
   function getVectorLayers(layers, init) {
     if (!init) init = [];
     layers.forEach(function(l) {
       if (l instanceof ol_layer_Vector) {
-        init.push(l);
+        if (!self._layers || self._layers.indexOf(l) >= 0) {
+          init.push(l);
+        }
       } else if (l.getLayers) {
         getVectorLayers(l.getLayers(), init);
       }
@@ -362,7 +370,15 @@ ol_interaction_UndoRedo.prototype.blockStart = function (name) {
 /** @private
  */
 ol_interaction_UndoRedo.prototype._onInteraction.beforesplit = function() {
-  this.blockStart('split');
+  // Check modify before split
+  var l = this._undoStack.getLength();
+  if (l>2 
+    && this._undoStack.item(l-1).type === 'blockend'
+    && this._undoStack.item(l-2).type === 'changegeometry') {
+    this._undoStack.pop();
+  } else {
+    this.blockStart('split');
+  }
 };
 ol_interaction_UndoRedo.prototype._onInteraction.deletestart = function() {
   this.blockStart('delete');

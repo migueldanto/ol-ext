@@ -86,6 +86,12 @@ ol_interaction_Clip.prototype.addLayer = function(layers)  {
   }
 };
 
+/** Remove all layers
+ */
+ol_interaction_Clip.prototype.removeLayers = function() {
+  this.removeLayer(this.layers_);
+};
+
 /** Remove a layer to clip
  *	@param {ol.layer|Array<ol.layer>} layer to clip
 */
@@ -102,8 +108,10 @@ ol_interaction_Clip.prototype.removeLayer = function(layers) {
       this.layers_[k].un(['precompose','prerender'], this.precomposeBind_);
       this.layers_[k].un(['postcompose','postrender'], this.postcomposeBind_);
       this.layers_.splice(k,1);
-      try { this.getMap().renderSync(); } catch(e) { /* ok */ }
     }
+  }
+  if (this.getMap()) {
+    try { this.getMap().renderSync(); } catch(e) { /* ok */ }
   }
 };
 
@@ -169,10 +177,13 @@ ol_interaction_Clip.prototype.precompose_ = function(e) {
   var radius = this.radius;
   var tr = e.inversePixelTransform;
   if (tr) {
+    // Transform pt
     pt = [
       (pt[0]*tr[0] - pt[1]*tr[1] + tr[4]),
       (-pt[0]*tr[2] + pt[1]*tr[3] + tr[5])
     ];
+    // Get radius / transform
+    radius = pt[0] - ((this.pos[0]-radius)*tr[0] - this.pos[1]*tr[1] + tr[4]);
   } else {
     pt[0] *= ratio;
     pt[1] *= ratio;

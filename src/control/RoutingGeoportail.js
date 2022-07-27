@@ -4,20 +4,26 @@
 */
 import ol_ext_inherits from '../util/ext'
 import ol_control_Control from 'ol/control/Control'
-import ol_geom_LineString from 'ol/geom/LineString';
 import ol_Feature from 'ol/Feature'
 import ol_ext_element from '../util/element';
 import ol_control_SearchGeoportail from './SearchGeoportail'
 import ol_source_Vector from 'ol/source/Vector'
 import ol_geom_Point from 'ol/geom/Point'
 import {transform as ol_proj_transform} from 'ol/proj'
+import { ol_coordinate_equal } from '../geom/GeomUtils'
+import ol_format_GeoJSON from 'ol/format/GeoJSON'
 
-/**
- * Geoportail routing Control.
+/** Geoportail routing Control.
  * @constructor
  * @extends {ol_control_Control}
  * @fires select
  * @fires change:input
+ * @fires routing:start
+ * @fires routing
+ * @fires step:select
+ * @fires step:hover
+ * @fires error
+ * @fires abort
  * @param {Object=} options
  *	@param {string} options.className control class name
  *	@param {string | undefined} [options.apiKey] the service api key.
@@ -33,13 +39,15 @@ import {transform as ol_proj_transform} from 'ol/proj'
  *	@param {integer | undefined} options.maxHistory maximum number of items to display in history. Set -1 if you don't want history, default maxItems
  *	@param {function} options.getTitle a function that takes a feature and return the name to display in the index.
  *	@param {function} options.autocomplete a function that take a search string and callback function to send an array
- *	@param {number} options.timeout default 10s
+ *	@param {number} options.timeout default 20s
  */
 var ol_control_RoutingGeoportail = function(options) {
   var self = this;
   if (!options) options = {};
   if (options.typing == undefined) options.typing = 300;
-  options.apiKey = options.apiKey || 'essentiels';
+  options.apiKey = options.apiKey || 'itineraire';
+  if (!options.search) options.search = {};
+  options.search.apiKey = options.search.apiKey || 'essentiels';
 
   // Class name for history
   this._classname = options.className || 'search';
@@ -67,7 +75,7 @@ var ol_control_RoutingGeoportail = function(options) {
     target: options.target
   });
   
-  this.set('url', 'https://wxs.ign.fr/'+options.apiKey+'/itineraire/rest/route.json');
+  this.set('url', 'https://wxs.ign.fr/calcul/geoportail/'+options.apiKey+'/rest/1.0.0/route');
 
   var content = ol_ext_element.create('DIV', { className: 'content', parent: element } )
 
@@ -99,7 +107,7 @@ var ol_control_RoutingGeoportail = function(options) {
   element.appendChild(this.resultElement);
 
   this.setMode(options.mode || 'car');
-  this.set('timeout', options.timeout || 10000);
+  this.set('timeout', options.timeout || 20000);
 };
 ol_ext_inherits(ol_control_RoutingGeoportail, ol_control_Control);
 
@@ -179,8 +187,8 @@ ol_control_RoutingGeoportail.prototype.addSearch = function (element, options, a
 
   var search = div.olsearch = new ol_control_SearchGeoportail({
     className: 'IGNF ol-collapsed',
-    apiKey: options.apiKey,
-    authentication: options.authentication,
+    apiKey: options.search.apiKey,
+    authentication: options.search.authentication,
     target: div,
     reverse: true
   });
@@ -269,13 +277,13 @@ ol_control_RoutingGeoportail.prototype.requestData = function (steps) {
     waypoints += (waypoints ? ';':'') + steps[i].x+','+steps[i].y;
   }
   return {
-    'gp-access-lib': '1.1.0',
-    origin: start.x+','+start.y,
-    destination: end.x+','+end.y,
-    method: this.get('method') || 'time', // 'distance'
-    graphName: this.get('mode')==='pedestrian' ? 'Pieton' : 'Voiture',
-    waypoints: waypoints,
-    format: 'STANDARDEXT'
+    resource: 'bdtopo-osrm', // 'bdtopo-pgr',
+    profile: this.get('mode')==='pedestrian' ? 'pedestrian' : 'car',
+    optimization: this.get('method') || 'fastest', // 'distance'
+    start: start.x+','+start.y,
+    end: end.x+','+end.y,
+    intermediates: waypoints,
+    geometryFormat: 'geojson'
   };
 };
 
@@ -321,16 +329,28 @@ ol_control_RoutingGeoportail.prototype.listRouting = function (routing) {
     'F': 'Continuer tout droit sur ',
   }
 
-  for (var i=0, f; f=routing.features[i]; i++) {
+  routing.features.forEach(function(f, i) {
     var d = this.getDistanceString(f.get('distance'));
     t = this.getTimeString(f.get('durationT'));
-    var li = document.createElement('li');
-        li.classList.add(f.get('instruction'));
-        li.innerHTML = (info[f.get('instruction')||'none']||'#')
-      + ' ' + f.get('name')
-      + '<i>' + d + (t ? ' - ' + t : '') +'</i>'
-    ul.appendChild(li);
-  }
+    ol_ext_element.create('LI', {
+      className: f.get('instruction'),
+      html: (info[f.get('instruction')||'none']||'#')
+        + ' ' + f.get('name')
+        + '<i>' + d + (t ? ' - ' + t : '') +'</i>',
+      on: {
+        pointerenter: function() {
+          this.dispatchEvent({ type: 'step:hover', hover: false, index: i, feature: f });
+        }.bind(this),
+        pointerleave: function() {
+          this.dispatchEvent({ type: 'step:hover', hover: false, index: i, feature: f });
+        }.bind(this)
+      },
+      click: function() {
+        this.dispatchEvent({ type: 'step:select', index: i, feature: f });
+      }.bind(this),
+      parent: ul
+    });
+  }.bind(this));
 };
 
 /** Handle routing response
@@ -345,20 +365,17 @@ ol_control_RoutingGeoportail.prototype.handleResponse = function (data, start, e
     })
     return;
   }
+  // console.log(data)
   var routing = { type:'routing' };
   routing.features = [];
   var distance = 0;
   var duration = 0;
-  var f, route = [];
-  for (var i=0, l; l=data.legs[i]; i++) {
+  var f;
+  var parser = new ol_format_GeoJSON();
+  var lastPt;
+  for (var i=0, l; l=data.portions[i]; i++) {
     for (var j=0, s; s=l.steps[j]; j++) {
-      var geom = [];
-      for (var k=0, p; p=s.points[k]; k++){
-        p = p.split(',');
-        geom.push([parseFloat(p[0]),parseFloat(p[1])]);
-        if (i===0 || k!==0) route.push(geom[k]);
-      }
-      geom = new ol_geom_LineString(geom);
+      /*
       var options = {
         geometry: geom.transform('EPSG:4326',this.getMap().getView().getProjection()),
         name: s.name,
@@ -372,16 +389,44 @@ ol_control_RoutingGeoportail.prototype.handleResponse = function (data, start, e
       options.distanceT = distance;
       options.durationT = duration;
       f = new ol_Feature(options);
+      */
+      s.type = 'Feature'; 
+      s.properties = s.attributes.name || s.attributes;
+      s.properties.distance = s.distance;
+      s.properties.duration = Math.round(s.duration * 60);
+      // Route info
+      if (s.instruction) {
+        s.properties.instruction_type = s.instruction.type;
+        s.properties.instruction_modifier = s.instruction.modifier;
+      }
+      // Distance / time
+      distance += s.distance;
+      duration += s.duration;
+      s.properties.distanceT = Math.round(distance * 100) / 100;
+      s.properties.durationT = Math.round(duration * 60);
+      s.properties.name = s.properties.cpx_toponyme_route_nommee || s.properties.cpx_toponyme || s.properties.cpx_numero || s.properties.nom_1_droite || s.properties.nom_1_gauche || ''; 
+      // TODO: BUG ?
+      var lp = s.geometry.coordinates[s.geometry.coordinates.length-1]
+      if (lastPt && !ol_coordinate_equal(lp, s.geometry.coordinates[s.geometry.coordinates.length-1])) {
+        s.geometry.coordinates.unshift(lastPt);
+      }
+      lastPt = s.geometry.coordinates[s.geometry.coordinates.length-1];
+      //
+      f = parser.readFeature(s, {
+        featureProjection: this.getMap().getView().getProjection()
+      });
       routing.features.push(f);
     }
   }
-  routing.distance = parseFloat(data.distanceMeters);
-  routing.duration = parseFloat(data.durationSeconds);
+  routing.distance = parseFloat(data.distance);
+  routing.duration = parseFloat(data.duration) / 60;
 
   // Full route
-  route = new ol_geom_LineString(route);
+  var route = parser.readGeometry(data.geometry, {
+    featureProjection: this.getMap().getView().getProjection()
+  });
   routing.feature = new ol_Feature ({
-    geometry: route.transform('EPSG:4326',this.getMap().getView().getProjection()),
+    geometry: route,
     start: this._search[0].getTitle(start),
     end: this._search[0].getTitle(end), 
     distance: routing.distance,
@@ -391,8 +436,18 @@ ol_control_RoutingGeoportail.prototype.handleResponse = function (data, start, e
   // console.log(data, routing);
   this.dispatchEvent(routing);
   this.path = routing;
-  console.log(routing)
   return routing;
+};
+
+/** Abort request
+ */
+ol_control_RoutingGeoportail.prototype.abort = function () {
+  // Abort previous request
+  if (this._request) {
+    this._request.abort();
+    this._request = null;
+    this.dispatchEvent({ type: 'abort' });
+  }
 };
 
 /** Calculate route
@@ -429,6 +484,7 @@ ol_control_RoutingGeoportail.prototype.calculate = function (steps) {
   }
 
   var self = this;
+  this.dispatchEvent({ type: 'routing:start' });
   this.ajax(url + parameters, 
     function (resp) {
       if (resp.status >= 200 && resp.status < 400) {
@@ -439,7 +495,7 @@ ol_control_RoutingGeoportail.prototype.calculate = function (steps) {
       }
     }.bind(this), 
     function(resp){
-      console.log('ERROR', resp)
+      // console.log('ERROR', resp)
       this.dispatchEvent({ type: 'error', status: resp.status, statusText: resp.statusText});
     }.bind(this)
   );
@@ -463,7 +519,7 @@ ol_control_RoutingGeoportail.prototype.ajax = function (url, onsuccess, onerror)
   // New request
   var ajax = this._request = new XMLHttpRequest();
   ajax.open('GET', url, true);
-  ajax.timeout = this.get('timeout') || 10000;
+  ajax.timeout = this.get('timeout') || 20000;
 
   if (this._auth) {
     ajax.setRequestHeader("Authorization", "Basic " + this._auth);

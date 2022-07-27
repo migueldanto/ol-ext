@@ -40,5 +40,5 @@ if(typeof window !== "undefined"){
   /* End Polyfill */
 }
 
-export {ol_ext_inherits}
+export { ol_ext_inherits }
 export default ol_ext_inherits

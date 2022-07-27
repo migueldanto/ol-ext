@@ -3,7 +3,6 @@
  */
 import ol_ext_inherits from '../ext'
 import ol_Object from 'ol/Object'
-import ol_ext_element from '../element';
 
 /** @namespace  ol.ext.input
  */
@@ -16,7 +15,7 @@ if (window.ol) {
  * @constructor
  * @extends {ol_Object}
  * @param {*} options
- *  @param {Element} [options.input] input element, if non create one
+ *  @param {Element} [options.input] input element, if none create one
  *  @param {string} [options.type] input type, if no input
  *  @param {number} [options.min] input min, if no input
  *  @param {number} [options.max] input max, if no input
@@ -32,17 +31,31 @@ var ol_ext_input_Base = function(options) {
   
   ol_Object.call(this);
   
-  var input = this.input = options.input || ol_ext_element.create('INPUT', { 
-    type: options.type,
-    min: options.min,
-    max: options.max,
-    step: options.step,
-    parent: options.parent
-  });
+  var input = this.input = options.input;
+  if (!input) {
+    input = this.input = document.createElement('INPUT');
+    if (options.type) input.setAttribute('type', options.type);
+    if (options.min !== undefined) input.setAttribute('min', options.min);
+    if (options.max !== undefined) input.setAttribute('max', options.max);
+    if (options.step !== undefined) input.setAttribute('step', options.step);
+    if (options.parent) options.parent.appendChild(input);
+  } 
   if (options.disabled) input.disabled = true;
   if (options.checked !== undefined) input.checked = !!options.checked;
   if (options.val !== undefined) input.value = options.val;
   if (options.hidden) input.style.display = 'none';
+  input.addEventListener('focus', function() {
+    if (this.element) this.element.classList.add('ol-focus');
+  }.bind(this))
+  var tout;
+  input.addEventListener('focusout', function() {
+    if (this.element) {
+      if (tout) clearTimeout(tout);
+      tout = setTimeout(function() {
+        this.element.classList.remove('ol-focus');
+      }.bind(this), 0);
+    }
+  }.bind(this))
 };
 ol_ext_inherits(ol_ext_input_Base, ol_Object);
 
@@ -54,6 +67,7 @@ ol_ext_inherits(ol_ext_input_Base, ol_Object);
 ol_ext_input_Base.prototype._listenDrag = function(elt, cback) {
   var handle = function(e) {
     this.moving = true;
+    this.element.classList.add('ol-moving');
     var listen = function(e) {
       if (e.type==='pointerup') {
         document.removeEventListener('pointermove', listen);
@@ -61,6 +75,7 @@ ol_ext_input_Base.prototype._listenDrag = function(elt, cback) {
         document.removeEventListener('pointercancel', listen);
         setTimeout(function() {
           this.moving = false;
+          this.element.classList.remove('ol-moving');
         }.bind(this));
       }
       if (e.target === elt) cback(e);
@@ -79,7 +94,7 @@ ol_ext_input_Base.prototype._listenDrag = function(elt, cback) {
 
 /** Set the current value
  */
- ol_ext_input_Base.prototype.setValue = function(v) {
+ol_ext_input_Base.prototype.setValue = function(v) {
   if (v !== undefined) this.input.value = v;
   this.input.dispatchEvent(new Event('change'));
 };

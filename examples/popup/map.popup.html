@@ -122,6 +122,7 @@
         You can add a bounce animation effect when popup appear just by adding the popupoverlay.anim.css (see <a href="map.popup.anim.html">example</a>)
       </li>
     </ul>
+    You can add a <a href="./map.popup.bar.html">mini vertical scrollbar</a> to your popup using the <i>minibar</i> option.
   </div>
 
   <!-- DIV pour la carte -->
@@ -176,15 +177,15 @@
   ];
 
   // Popup overlay
-  var popup = new ol.Overlay.Popup (
-    {	popupClass: "default", //"tooltips", "warning" "black" "default", "tips", "shadow",
-      closeBox: true,
-      onshow: function(){ console.log("You opened the box"); },
-      onclose: function(){ console.log("You close the box"); },
-      positioning: 'auto',
-      autoPan: true,
-      autoPanAnimation: { duration: 250 }
-    });
+  var popup = new ol.Overlay.Popup ({
+    popupClass: "default", //"tooltips", "warning" "black" "default", "tips", "shadow",
+    closeBox: true,
+    onshow: function(){ console.log("You opened the box"); },
+    onclose: function(){ console.log("You close the box"); },
+    positioning: 'auto',
+    autoPan: true,
+    autoPanAnimation: { duration: 250 }
+  });
     
   // The map
   var map = new ol.Map ({

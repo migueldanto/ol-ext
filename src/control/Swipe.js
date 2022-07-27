@@ -9,7 +9,7 @@ import ol_control_Control from 'ol/control/Control'
 
 /**
  * @classdesc Swipe Control.
- *
+ * @fires moving
  * @constructor
  * @extends {ol_control_Control}
  * @param {Object=} Control options.
@@ -44,7 +44,7 @@ var ol_control_Swipe = function(options) {
   if (options.layers) this.addLayer(options.layers, false);
   if (options.rightLayers) this.addLayer(options.rightLayers, true);
 
-  this.on('propertychange', function() {
+  this.on('propertychange', function(e) {
     if (this.getMap()) {
       try { this.getMap().renderSync(); } catch(e) { /* ok */ }
     }
@@ -56,8 +56,16 @@ var ol_control_Swipe = function(options) {
       this.element.style.left = this.get('position')*100+"%";
       this.element.style.top = "";
     }
-    this.element.classList.remove("horizontal", "vertical");
-    this.element.classList.add(this.get('orientation'));
+    if (e.key==='orientation') {
+      this.element.classList.remove("horizontal", "vertical");
+      this.element.classList.add(this.get('orientation'));
+    }
+    // Force VectorImage to refresh
+    if (!this.isMoving) {
+      this.layers.forEach(function(l) {
+        if (l.layer.getImageRatio) l.layer.changed();
+      })
+    }
   }.bind(this));
 
   this.set('position', options.position || 0.5);
@@ -108,8 +116,8 @@ ol_control_Swipe.prototype.isLayer_ = function(layer){
 
 /** Add a layer to clip
  *	@param {ol.layer|Array<ol.layer>} layer to clip
-*	@param {bool} add layer in the right part of the map, default left.
-*/
+ *	@param {bool} add layer in the right part of the map, default left.
+ */
 ol_control_Swipe.prototype.addLayer = function(layers, right) {
   if (!(layers instanceof Array)) layers = [layers];
   for (var i=0; i<layers.length; i++) {
@@ -126,9 +134,17 @@ ol_control_Swipe.prototype.addLayer = function(layers, right) {
   }
 };
 
+/** Remove all layers
+ */
+ol_control_Swipe.prototype.removeLayers = function() {
+  var layers = [];
+  this.layers.forEach(function(l) { layers.push(l.layer); });
+  this.removeLayer(layers)
+};
+
 /** Remove a layer to clip
  *	@param {ol.layer|Array<ol.layer>} layer to clip
-*/
+ */
 ol_control_Swipe.prototype.removeLayer = function(layers) {
   if (!(layers instanceof Array)) layers = [layers];
   for (var i=0; i<layers.length; i++) {
@@ -138,16 +154,33 @@ ol_control_Swipe.prototype.removeLayer = function(layers) {
       else layers[i].un(['precompose','prerender'], this.precomposeLeft_);
       layers[i].un(['postcompose','postrender'], this.postcompose_);
       this.layers.splice(k,1);
-      try { this.getMap().renderSync(); } catch(e) { /* ok */ }
     }
+  }
+  if (this.getMap()) {
+    try { this.getMap().renderSync(); } catch(e) { /* ok */ }
+  }
+};
+
+/** Get visible rectangle
+ * @returns {ol.extent}
+ */
+ol_control_Swipe.prototype.getRectangle = function() {
+  var s;
+  if (this.get('orientation') === 'vertical') {
+    s = this.getMap().getSize();
+    return [ 0, 0, s[0]*this.get('position'), s[1]];
+  } else {
+    s = this.getMap().getSize();
+    return [ 0, 0, s[0], s[1]*this.get('position')];
   }
 };
 
 /** @private
-*/
+ */
 ol_control_Swipe.prototype.move = function(e) {
   var self = this;
   var l;
+  if (!this._movefn) this._movefn = this.move.bind(this);
   switch (e.type) {
     case 'touchcancel':
     case 'touchend':
@@ -155,8 +188,12 @@ ol_control_Swipe.prototype.move = function(e) {
       self.isMoving = false;
       ["mouseup", "mousemove", "touchend", "touchcancel", "touchmove"]
         .forEach(function(eventName) {
-          document.removeEventListener(eventName, self.move);
+          document.removeEventListener(eventName, self._movefn);
         });
+      // Force VectorImage to refresh
+      this.layers.forEach(function(l) {
+        if (l.layer.getImageRatio) l.layer.changed();
+      })
       break;
     }
     case 'mousedown':
@@ -164,14 +201,14 @@ ol_control_Swipe.prototype.move = function(e) {
       self.isMoving = true;
       ["mouseup", "mousemove", "touchend", "touchcancel", "touchmove"]
         .forEach(function(eventName) {
-          document.addEventListener(eventName, self.move.bind(self));
+          document.addEventListener(eventName, self._movefn);
         });
     }
     // fallthrough
     case 'mousemove':
     case 'touchmove': {
       if (self.isMoving) {
-        if (self.get('orientation') === "vertical") {
+        if (self.get('orientation') === 'vertical') {
           var pageX = e.pageX
             || (e.touches && e.touches.length && e.touches[0].pageX)
             || (e.changedTouches && e.changedTouches.length && e.changedTouches[0].pageX);
@@ -180,8 +217,10 @@ ol_control_Swipe.prototype.move = function(e) {
             window.pageXOffset - document.documentElement.clientLeft;
 
           l = self.getMap().getSize()[0];
-          l = Math.min(Math.max(0, 1-(l-pageX)/l), 1);
+          var w = l - Math.min(Math.max(0, l-pageX), l);
+          l = w/l;
           self.set('position', l);
+          self.dispatchEvent({ type: 'moving', size: [w, self.getMap().getSize()[1]], position: [l,0] });
         } else {
           var pageY = e.pageY
             || (e.touches && e.touches.length && e.touches[0].pageY)
@@ -191,8 +230,10 @@ ol_control_Swipe.prototype.move = function(e) {
             window.pageYOffset - document.documentElement.clientTop;
 
           l = self.getMap().getSize()[1];
-          l = Math.min(Math.max(0, 1-(l-pageY)/l), 1);
+          var h = l - Math.min(Math.max(0, l-pageY), l);
+          l = h/l;
           self.set('position', l);
+          self.dispatchEvent({ type: 'moving', size: [self.getMap().getSize()[0],h], position: [0,l] });
         }
       }
       break;
@@ -201,6 +242,19 @@ ol_control_Swipe.prototype.move = function(e) {
   }
 };
 
+/** @private
+ */
+ol_control_Swipe.prototype._transformPt = function(e, pt) {
+  var tr = e.inversePixelTransform;
+  var x = pt[0];
+  var y = pt[1];
+  pt[0] = tr[0] * x + tr[2] * y + tr[4];
+  pt[1] = tr[1] * x + tr[3] * y + tr[5];
+  return pt;
+};
+
+/** @private
+ */
 ol_control_Swipe.prototype._drawRect = function(e, pts) {
   var tr = e.inversePixelTransform;
   if (tr) {
@@ -211,6 +265,14 @@ ol_control_Swipe.prototype._drawRect = function(e, pts) {
       [pts[1][0], pts[0][1]],
       [pts[0][0], pts[0][1]]
     ];
+    e.context.save()
+    // Rotate VectorImages 
+    if (e.target.getImageRatio) {
+      var rot = -Math.atan2(e.frameState.pixelToCoordinateTransform[1], e.frameState.pixelToCoordinateTransform[0]);
+      e.context.translate(e.frameState.size[0]/2, e.frameState.size[1]/2)
+      e.context.rotate(rot)
+      e.context.translate(-e.frameState.size[0]/2, -e.frameState.size[1]/2)
+    }
     r.forEach(function (pt, i) {
       pt = [
         (pt[0]*tr[0] - pt[1]*tr[1] + tr[4]),
@@ -222,6 +284,7 @@ ol_control_Swipe.prototype._drawRect = function(e, pts) {
         e.context.lineTo(pt[0], pt[1]);
       }
     });
+    e.context.restore();
   } else {
     var ratio = e.frameState.pixelRatio;
     e.context.rect(pts[0][0]*ratio,pts[0][1]*ratio,pts[1][0]*ratio,pts[1][1]*ratio);
@@ -232,59 +295,124 @@ ol_control_Swipe.prototype._drawRect = function(e, pts) {
 */
 ol_control_Swipe.prototype.precomposeLeft = function(e) {
   var ctx = e.context;
-  var size = e.frameState.size;
-  ctx.save();
-  ctx.beginPath();
-  var pts = [[0,0],[size[0],size[1]]];
-  if (this.get('orientation') === "vertical") {
-    pts[1] = [
-      size[0]*this.get('position'), 
-      size[1]
-    ];
+  if (ctx instanceof WebGLRenderingContext) {
+    if (e.type === 'prerender') {
+      // Clear
+      ctx.clearColor(0, 0, 0, 0);
+      ctx.clear(ctx.COLOR_BUFFER_BIT);
+
+      // Clip
+      ctx.enable(ctx.SCISSOR_TEST);
+
+      var mapSize = this.getMap().getSize(); // [width, height] in CSS pixels
+    
+      // get render coordinates and dimensions given CSS coordinates
+      var bottomLeft = this._transformPt(e, [0, mapSize[1]]);
+      var topRight = this._transformPt(e, [mapSize[0], 0]);
+    
+      var fullWidth = topRight[0] - bottomLeft[0];
+      var fullHeight = topRight[1] - bottomLeft[1];
+      if (this.get('orientation') === "vertical") {
+        var width = Math.round(fullWidth * this.get('position'));
+        var height = fullHeight;
+      } else {
+        var width = fullWidth;
+        var height = Math.round((fullHeight * this.get('position')));
+        bottomLeft[1] += fullHeight - height;
+      }
+      ctx.scissor(bottomLeft[0], bottomLeft[1], width, height); 
+    }
   } else {
-    pts[1] = [
-      size[0],
-      size[1]*this.get('position')
-    ];
+    var size = e.frameState.size;
+    ctx.save();
+    ctx.beginPath();
+    var pts = [[0,0],[size[0],size[1]]];
+    if (this.get('orientation') === "vertical") {
+      pts[1] = [
+        size[0]*.5 + this.getMap().getSize()[0] * (this.get('position') - .5), 
+        size[1]
+      ];
+    } else {
+      pts[1] = [
+        size[0],
+        size[1]*.5 + this.getMap().getSize()[1] * (this.get('position') - .5)
+      ];
+    }
+    this._drawRect(e, pts);
+    ctx.clip();
   }
-  this._drawRect(e, pts);
-  ctx.clip();
 };
 
 /** @private
 */
 ol_control_Swipe.prototype.precomposeRight = function(e) {
   var ctx = e.context;
-  var size = e.frameState.size;
-  ctx.save();
-  ctx.beginPath();
-  var pts = [[0,0],[size[0],size[1]]];
-  if (this.get('orientation') === "vertical") {
-    pts[0] = [
-      size[0]*this.get('position'), 
-      0
-    ];
+  if (ctx instanceof WebGLRenderingContext) {
+    if (e.type === 'prerender') {
+      // Clear
+      ctx.clearColor(0, 0, 0, 0);
+      ctx.clear(ctx.COLOR_BUFFER_BIT);
+
+      // Clip
+      ctx.enable(ctx.SCISSOR_TEST);
+
+      var mapSize = this.getMap().getSize(); // [width, height] in CSS pixels
+    
+      // get render coordinates and dimensions given CSS coordinates
+      var bottomLeft = this._transformPt(e, [0, mapSize[1]]);
+      var topRight = this._transformPt(e, [mapSize[0], 0]);
+    
+      var fullWidth = topRight[0] - bottomLeft[0];
+      var fullHeight = topRight[1] - bottomLeft[1];
+      if (this.get('orientation') === "vertical") {
+        var height = fullHeight;
+        var width = Math.round(fullWidth * (1-this.get('position')));
+        bottomLeft[0] += fullWidth - width;
+      } else {
+        var width = fullWidth;
+        var height = Math.round(fullHeight * (1-this.get('position')));
+      }
+      ctx.scissor(bottomLeft[0], bottomLeft[1], width, height); 
+    }
   } else {
-    pts[0] = [
-      0,
-      size[1]*this.get('position')
-    ]
+    var size = e.frameState.size;
+    ctx.save();
+    ctx.beginPath();
+    var pts = [[0,0],[size[0],size[1]]];
+    if (this.get('orientation') === "vertical") {
+      pts[0] = [
+        size[0]*.5 + this.getMap().getSize()[0] * (this.get('position') - .5), 
+        0
+      ];
+    } else {
+      pts[0] = [
+        0,
+        size[1]*.5 + this.getMap().getSize()[1] * (this.get('position') - .5)
+      ]
+    }
+    this._drawRect(e, pts);
+    ctx.clip();
   }
-  this._drawRect(e, pts);
-  ctx.clip();
 };
 
 /** @private
 */
 ol_control_Swipe.prototype.postcompose = function(e) {
-  // restore context when decluttering is done (ol>=6)
-  // https://github.com/openlayers/openlayers/issues/10096
-  if (e.target.getClassName && e.target.getClassName()!=='ol-layer' && e.target.get('declutter')) {
-    setTimeout(function () {
-      e.context.restore();
-    }, 0);
+  if (e.context instanceof WebGLRenderingContext) {
+    if (e.type === 'postrender') {
+      var gl = e.context;
+      gl.disable(gl.SCISSOR_TEST);
+    }
   } else {
-    e.context.restore();
+    // restore context when decluttering is done (ol>=6)
+    // https://github.com/openlayers/openlayers/issues/10096
+    if (e.target.getClassName && e.target.getClassName()!=='ol-layer' && e.target.get('declutter')) {
+      setTimeout(function () {
+        e.context.restore();
+      }, 0);
+    } else {
+      e.context.restore();
+    }
   }
 };
 

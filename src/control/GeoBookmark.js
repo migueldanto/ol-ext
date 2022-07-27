@@ -13,6 +13,7 @@ import ol_ext_element from '../util/element'
  *  @param {string} options.className default ol-bookmark
  *  @param {string | undefined} options.title Title to use for the button tooltip, default "Geobookmarks"
  *  @param {string} options.placeholder input placeholder, default Add a new geomark...
+ *  @param {string} [options.deleteTitle='Suppr.'] title for delete buttons
  *  @param {bool} options.editable enable modification, default true
  *  @param {string} options.namespace a namespace to save the boolmark (if more than one on a page), default ol
  *  @param {Array<any>} options.marks a list of default bookmarks: 
@@ -45,8 +46,10 @@ var ol_control_GeoBookmark = function(options) {
       type: 'button',
       title: options.title || 'Geobookmarks',
       click: function() {
-        menu.style.display = (menu.style.display === '' || menu.style.display === 'none' ? 'block': 'none');
-      }
+        var show = (menu.style.display === '' || menu.style.display === 'none');
+        menu.style.display = (show ? 'block': 'none');
+        if (show) this.setBookmarks();
+      }.bind(this)
     });
     element.appendChild(this.button);
   }
@@ -57,17 +60,21 @@ var ol_control_GeoBookmark = function(options) {
   menu.appendChild(ul);
   var input = document.createElement('input');
   input.setAttribute("placeholder", options.placeholder || "Add a new geomark...")
-  input.addEventListener("change", function() {
-    var title = this.value;
-    if (title) {
-      self.addBookmark(title);
-      this.value = '';
-      self.dispatchEvent({
-        type: "add",
-        name: title
-      });
+  input.addEventListener("keydown", function(e) {
+    e.stopPropagation();
+    if (e.keyCode === 13) {
+      e.preventDefault();
+      var title = this.value;
+      if (title) {
+        self.addBookmark(title);
+        this.value = '';
+        self.dispatchEvent({
+          type: "add",
+          name: title
+        });
+      }
+      menu.style.display = 'none';
     }
-    menu.style.display = 'none';
   });
   input.addEventListener("blur", function() {
     menu.style.display = 'none';
@@ -92,7 +99,8 @@ var ol_control_GeoBookmark = function(options) {
 
   this.set("namespace", options.namespace || 'ol');
   this.set("editable", options.editable !== false);
-  
+  this.set('deleteTitle', options.deleteTitle || 'Suppr.');
+
   // Set default bmark
   var bmark = {};
   try {
@@ -147,7 +155,8 @@ ol_control_GeoBookmark.prototype.setBookmarks = function(bmark) {
     if (modify && !bmark[b].permanent) {
       var button = document.createElement('button');
       button.setAttribute('data-name', b);
-      button.setAttribute("title", "Suppr.");
+      button.setAttribute('type', 'button');
+      button.setAttribute('title', this.get('deleteTitle') ||'Suppr.');
       button.addEventListener('click', function(e) {
         self.removeBookmark(this.getAttribute("data-name"));
         self.dispatchEvent({ type: "remove", name: this.getAttribute("data-name") });
@@ -195,12 +204,14 @@ ol_control_GeoBookmark.prototype.removeBookmark = function(name) {
 ol_control_GeoBookmark.prototype.addBookmark = function(name, position, zoom, permanent) {
   if (!name) return;
   var options = position;
-  var rot = this.getMap().getView().getRotation();
+  var rot;
   if (options && options.position) {
     zoom = options.zoom;
     permanent = options.permanent;
     rot = options.rotation ;
     position = options.position;
+  } else {
+    rot = this.getMap().getView().getRotation();
   }
   var bmark = this.getBookmarks();
   // Don't override permanent bookmark

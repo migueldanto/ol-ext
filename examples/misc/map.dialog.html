@@ -46,6 +46,21 @@
       font-size: 3em;
       margin-top: -.1em;
     }
+    .autoclose {
+      text-align: center;
+      font-size: 1.5em;
+    }
+    .autoclose span {
+      font-size: 2em;
+      color: #369;
+      vertical-align: sub;
+      font-family: sans-serif;
+      font-weight: bold;
+      padding: 0 .1em;
+    }
+    .ol-ext-dialog.ol-visible > form {
+      overflow: visible;
+    }
   </style>
 </head>
 <body >
@@ -55,7 +70,7 @@
     <h1>ol-ext: Dialog</h1>
   </a>
   <div class="info">
-    A convenient vay to display dialog on a map.
+    <i>ol/control/Dialog</i> is a convenient vay to display dialog on a map.
     <ul>
       <li>
         Dialog has a dropdown or zoom effect
@@ -95,6 +110,10 @@
       <button onclick="if (!dialogProgress.isOpen()) dialogProgress.show({ progress : 0 })">Show a progress dialog...</button>
     </li><li>
       <button onclick="alert.show('This is an alert!<br/>Nothing goes wrong...')">Show an alert!</button>
+    </li><li>
+      <button onclick="showAutoClose()">Autoclose dialog</button>
+    </li><li>
+      <button onclick="dlarg.show({ content: lorem, title: 'Large dialog', closeBox: true, buttons:['ok','cancel'] })">Large dialog</button>
     </li></ul>
     <p>
     </p>
@@ -122,11 +141,11 @@
   map.addControl(notification);
 
   // Dialog outside the map
-  var dialog = new ol.control.Dialog({ target: document.body, closeBox: true });
+  var dialog = new ol.control.Dialog({ fullscreen: true, closeBox: true });
   map.addControl(dialog);
 
   // Dialog with zoom option
-  var dialogZoom = new ol.control.Dialog({ target: document.body, zoom: true, closeBox: true });
+  var dialogZoom = new ol.control.Dialog({ fullscreen: true, zoom: true, closeBox: true });
   dialogZoom.on('button', function(e) {
     notification.show(e.button)
   });
@@ -137,8 +156,7 @@
   map.addControl(dialogMap);
 
   // Prompt dialog
-  var dialogPrompt = new ol.control.Dialog();
-  dialogPrompt.setContent({
+  var dialogPrompt = new ol.control.Dialog({
     content: 'Enter a value:<br/><input class="value" type="text" placeholder="Enter a value" />',
     title: 'Prompt', 
     buttons:{ submit:'ok', cancel:'cancel' }
@@ -181,6 +199,29 @@
   // Alert
   var alert = new ol.control.Dialog({ className: 'alert', hideOnClick: true, closeBox: true });
   map.addControl(alert);
+
+  // Large dialog
+  var aclose = new ol.control.Dialog({ className: "autoclose", fullscreen: true, zoom: true, closeBox: true });
+  map.addControl(aclose);
+  function showAutoClose() {
+    var delay = 5;
+    var content = document.createElement('DIV');
+    content.innerHTML = 'The dialog will close <br/> in <span></span> s.';
+    var dspan = content.querySelector('SPAN');
+    aclose.show({ content: content, autoclose: delay * 1000 });
+    function setTime(d) {
+      dspan.innerText = d--;
+      if (d>0) setTimeout(function() { setTime(d); }, 1000);
+    }
+    setTime(delay);
+  }
+
+  // Large dialog
+  var dlarg = new ol.control.Dialog({ fullscreen: true, zoom: true, closeBox: true });
+  map.addControl(dlarg);
+  var lorem = "<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed quis massa leo. Sed tempor tristique ligula non tempus. Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. In eget varius urna. Maecenas dapibus, metus vitae pellentesque gravida, dolor nisi vehicula arcu, vel tincidunt metus arcu tincidunt lectus. Praesent id auctor risus. Nam id molestie tellus, id aliquam ante. Proin imperdiet, velit sed aliquet tempor, libero felis lobortis nisl, vel pretium purus lectus ut velit. Pellentesque vitae luctus mauris. Suspendisse eros magna, vulputate eu ornare id, dictum at mi. Etiam et viverra erat. Maecenas sed elementum lorem, eget posuere quam.</p>";
+  lorem = lorem+lorem+lorem+lorem+lorem+lorem+lorem+lorem+lorem+lorem;
+
 
   </script>
   

@@ -41,7 +41,7 @@ import ol_control_Compass from './Compass';
  */
 var ol_control_PrintDialog = function(options) {
   if (!options) options = {};
-  this._lang = options.lang;
+  this._lang = options.lang || 'en';
 
   var element = ol_ext_element.create('DIV', {
     className: (options.className || 'ol-print') + ' ol-unselectable ol-control'
@@ -67,7 +67,6 @@ var ol_control_PrintDialog = function(options) {
     });
   }
   
-
   // Print control
   options.target = ol_ext_element.create('DIV');
   var printCtrl = this._printCtrl = new ol_control_Print(options);
@@ -204,7 +203,7 @@ var ol_control_PrintDialog = function(options) {
   });
   for (s in this.marginSize) {
     ol_ext_element.create('OPTION', {
-      html: s + ' - ' + this.marginSize[s] + ' mm',
+      html: this.i18n(s) + ' - ' + this.marginSize[s] + ' mm',
       value: this.marginSize[s],
       parent: margin
     });
@@ -348,11 +347,11 @@ var ol_control_PrintDialog = function(options) {
       return;
     }
     ol_ext_element.create('OPTION', {
-      html: format.title,
+      html: this.i18n(format.title),
       value: i,
       parent: save
     });
-  });
+  }.bind(this));
 
   // Save Legend
   li = ol_ext_element.create('LI',{ 
@@ -437,11 +436,11 @@ var ol_control_PrintDialog = function(options) {
   });
   this.formats.forEach(function(format, i) {
     ol_ext_element.create('OPTION', {
-      html: format.title,
+      html: this.i18n(format.title),
       value: i,
       parent: saveLegend
     });
-  });
+  }.bind(this));
 
   // Print
   var prButtons = ol_ext_element.create('DIV', {
@@ -635,6 +634,13 @@ ol_control_PrintDialog.prototype._labels = {
     copied: '✔ Copied to clipboard',
     errorMsg: 'Can\'t save map canvas...',
     printBt: 'Print...',
+    clipboardFormat: 'copy to clipboard...',
+    jpegFormat: 'save as jpeg',
+    pngFormat: 'save as png',
+    pdfFormat: 'save as pdf',
+    none: 'none',
+    small: 'small',
+    large: 'large',  
     cancel: 'cancel'
   },
   fr: {
@@ -654,7 +660,59 @@ ol_control_PrintDialog.prototype._labels = {
     copied: '✔ Carte copiée',
     errorMsg: 'Impossible d\'enregistrer la carte',
     printBt: 'Imprimer',
+    clipboardFormat: 'copier dans le presse-papier...',
+    jpegFormat: 'enregistrer un jpeg',
+    pngFormat: 'enregistrer un png',
+    pdfFormat: 'enregistrer un pdf',
+    none: 'aucune',
+    small: 'petites',
+    large: 'larges',  
     cancel: 'annuler'
+  },
+  de: {
+    title: 'Drucken',
+    orientation: 'Ausrichtung',
+    portrait: 'Hochformat',
+    landscape: 'Querformat',
+    size: 'Papierformat',
+    custom: 'Bildschirmgröße',
+    margin: 'Rand',
+    scale: 'Maßstab',
+    legend: 'Legende',
+    north: 'Nordpfeil',
+    mapTitle: 'Kartentitel',
+    saveas: 'Speichern als...',
+    saveLegend: 'Legende speichern...',
+    copied: '✔ In die Zwischenablage kopiert',
+    errorMsg: 'Kann Karte nicht speichern...',
+    printBt: 'Drucken...',
+    clipboardFormat: 'in die Zwischenablage kopieren...',
+    jpegFormat: 'speichern als jpeg',
+    pngFormat: 'speichern als png',
+    pdfFormat: 'speichern als pdf',
+    none: 'kein',
+    small: 'klein',
+    large: 'groß',  
+    cancel: 'abbrechen'
+  },
+  zh:{
+    title: '打印',
+    orientation: '方向',
+    portrait: '纵向',
+    landscape: '横向',
+    size: '页面大小',
+    custom: '屏幕大小',
+    margin: '外边距',
+    scale: '尺度',
+    legend: '图例',
+    north: '指北针',
+    mapTitle: '地图名字',
+    saveas: '保存为...',
+    saveLegend: '保存图例为...',
+    copied: '✔ 已复制到剪贴板',
+    errorMsg: '无法保存地图...',
+    printBt: '打印...',
+    cancel: '取消'
   }
 };
 
@@ -666,6 +724,7 @@ ol_control_PrintDialog.prototype.paperSize = {
   'A2': [420,594],
   'A3': [297,420],
   'A4': [210,297],
+  'US Letter': [215.9,279.4],
   'A5': [148,210],
   'B4': [257,364],
   'B5': [182,257]
@@ -686,19 +745,19 @@ ol_control_PrintDialog.prototype.legendOptions = {
 
 /** List of print image file formats */
 ol_control_PrintDialog.prototype.formats = [{
-    title: 'copy to clipboard',
+    title: 'clipboardFormat',
     imageType: 'image/png',
     clipboard: true
   }, {
-    title: 'save as jpeg',
+    title: 'jpegFormat',
     imageType: 'image/jpeg',
     quality: .8
   }, {
-    title: 'save as png',
+    title: 'pngFormat',
     imageType: 'image/png',
     quality: .8
   }, {
-    title: 'save as pdf',
+    title: 'pdfFormat',
     imageType: 'image/jpeg',
     pdf: true
   }
@@ -766,7 +825,13 @@ ol_control_PrintDialog.prototype.setSize = function (size) {
   if (!size) return;
 
   if (typeof(size) === 'string') {
-    size = size.toLocaleUpperCase();
+    // Test uppercase
+    for (var k in this.paperSize) {
+      if (k && new RegExp(k, 'i').test(size)) {
+        size = k;
+      }
+    }
+    // Default
     if (!this.paperSize[size]) size = this._size = 'A4';
     this._input.size.value = size;
     size = [

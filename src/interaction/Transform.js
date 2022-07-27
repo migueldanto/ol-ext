@@ -12,6 +12,7 @@ import ol_style_RegularShape from 'ol/style/RegularShape'
 import {fromExtent as ol_geom_Polygon_fromExtent} from 'ol/geom/Polygon'
 import {boundingExtent as ol_extent_boundingExtent, buffer as ol_extent_buffer, createEmpty as ol_extent_createEmpty, extend as ol_extent_extend, getCenter as ol_extent_getCenter} from 'ol/extent'
 import {unByKey as ol_Observable_unByKey} from 'ol/Observable'
+import ol_geom_Polygon from 'ol/geom/Polygon'
 
 /** Interaction rotate
  * @constructor
@@ -35,8 +36,9 @@ import {unByKey as ol_Observable_unByKey} from 'ol/Observable'
  *	@param {ol.events.ConditionType | undefined} options.keepAspectRatio A function that takes an ol.MapBrowserEvent and returns a boolean to keep aspect ratio, default ol.events.condition.shiftKeyOnly.
  *	@param {ol.events.ConditionType | undefined} options.modifyCenter A function that takes an ol.MapBrowserEvent and returns a boolean to apply scale & strech from the center, default ol.events.condition.metaKey or ol.events.condition.ctrlKey.
  *	@param {boolean} options.enableRotatedTransform Enable transform when map is rotated
- *	@param {} options.style list of ol.style for handles
- *
+ *	@param {boolean} [options.keepRectangle=false] keep rectangle when possible
+ *	@param {*} options.style list of ol.style for handles
+ *  @param {number|Array<number>|function} [options.pointRadius=0] radius for points or a function that takes a feature and returns the radius (or [radiusX, radiusY]). If not null show handles to transform the points
  */
 var ol_interaction_Transform = function(options) {
   if (!options) options = {};
@@ -76,6 +78,7 @@ var ol_interaction_Transform = function(options) {
 
   this._handleEvent = options.condition || function() { return true; };
   this.addFn_ = options.addCondition || function() { return false; };
+  this.setPointRadius(options.pointRadius);
   /* Translate when click on feature */
   this.set('translateFeature', (options.translateFeature!==false));
   /* Can translate the feature */
@@ -100,6 +103,8 @@ var ol_interaction_Transform = function(options) {
   this.set('hitTolerance', (options.hitTolerance || 0));
   /* Enable view rotated transforms */
   this.set('enableRotatedTransform', (options.enableRotatedTransform || false));
+  /* Keep rectangle angles 90 degrees */
+  this.set('keepRectangle', (options.keepRectangle || false));
 
 
   // Force redraw when changed
@@ -186,9 +191,11 @@ ol_interaction_Transform.prototype.setDefaultStyle = function(options) {
       fill: fill,
       stroke: stroke,
       radius: this.isTouch ? 12 : 6,
+      displacement: this.isTouch ? [24, -24] : [12, -12],
       points: 15
     });
-  circle.getAnchor()[0] = this.isTouch ? -10 : -5;
+  // Old version with no displacement
+  if (!circle.setDisplacement) circle.getAnchor()[0] = this.isTouch ? -10 : -5; 
   var bigpt = new ol_style_RegularShape({
       fill: fill,
       stroke: stroke,
@@ -237,7 +244,9 @@ ol_interaction_Transform.prototype.setStyle = function(style, olstyle) {
   for (var i=0; i<this.style[style].length; i++) {
     var im = this.style[style][i].getImage();
     if (im) {
-      if (style == 'rotate') im.getAnchor()[0] = -5;
+      if (style == 'rotate') {
+        im.getAnchor()[0] = -5;
+      }
       if (this.isTouch) im.setScale(1.8);
     }
     var tx = this.style[style][i].getText();
@@ -318,23 +327,45 @@ ol_interaction_Transform.prototype.getGeometryRotateToZero_ = function(f, clone)
   var rotGeom = origGeom.clone();
   rotGeom.rotate(viewRotation * -1, this.getMap().getView().getCenter());
   return rotGeom;
-}
+};
+
+/** Test if rectangle
+ * @param {ol.Geometry} geom
+ * @returns {boolean}
+ * @private
+ */
+ol_interaction_Transform.prototype._isRectangle = function(geom) {
+  if (this.get('keepRectangle') && geom.getType() === 'Polygon') {
+    var coords = geom.getCoordinates()[0];
+    return coords.length === 5;
+  }
+  return false;
+};
 
 /** Draw transform sketch
 * @param {boolean} draw only the center
 */
 ol_interaction_Transform.prototype.drawSketch_ = function(center) {
   var i, f, geom;
+  var keepRectangle = this.selection_.item(0) && this._isRectangle(this.selection_.item(0).getGeometry());
   this.overlayLayer_.getSource().clear();
   if (!this.selection_.getLength()) return;
   var viewRotation = this.getMap().getView().getRotation();
   var ext = this.getGeometryRotateToZero_(this.selection_.item(0)).getExtent();
+  var coords;
+  if (keepRectangle) {
+    coords = this.getGeometryRotateToZero_(this.selection_.item(0)).getCoordinates()[0].slice(0, 4);
+    coords.unshift(coords[3]);
+  }
   // Clone and extend
   ext = ol_extent_buffer(ext, 0);
   this.selection_.forEach(function (f) {
     var extendExt = this.getGeometryRotateToZero_(f).getExtent();
     ol_extent_extend(ext, extendExt);
   }.bind(this));
+
+  var ptRadius = (this.selection_.getLength() === 1 ? this._pointRadius(this.selection_.item(0)) : 0);
+  if (ptRadius && !(ptRadius instanceof Array)) ptRadius = [ptRadius, ptRadius];
 
   if (center===true) {
     if (!this.ispt_) {
@@ -346,26 +377,30 @@ ol_interaction_Transform.prototype.drawSketch_ = function(center) {
       f = this.bbox_ = new ol_Feature(geom);
       this.overlayLayer_.getSource().addFeature (f);
     }
-  }
-  else {
+  } else {
     if (this.ispt_) {
+      // Calculate extent arround the point
       var p = this.getMap().getPixelFromCoordinate([ext[0], ext[1]]);
-      ext = ol_extent_boundingExtent([
-        this.getMap().getCoordinateFromPixel([p[0]-10, p[1]-10]),
-        this.getMap().getCoordinateFromPixel([p[0]+10, p[1]+10])
-      ]);
+      if (p) {
+        var dx = ptRadius ? ptRadius[0] || 10 : 10;
+        var dy = ptRadius ? ptRadius[1] || 10 : 10;
+        ext = ol_extent_boundingExtent([
+          this.getMap().getCoordinateFromPixel([p[0] - dx, p[1] - dy]),
+          this.getMap().getCoordinateFromPixel([p[0] + dx, p[1] + dy])
+        ]);
+      }
     }
-    geom = ol_geom_Polygon_fromExtent(ext);
+    geom = keepRectangle ? new ol_geom_Polygon([coords]) : ol_geom_Polygon_fromExtent(ext);
     if (this.get('enableRotatedTransform') && viewRotation !== 0) {
       geom.rotate(viewRotation, this.getMap().getView().getCenter())
     }
     f = this.bbox_ = new ol_Feature(geom);
     var features = [];
     var g = geom.getCoordinates()[0];
-    if (!this.ispt_) {
+    if (!this.ispt_ || ptRadius) {
       features.push(f);
       // Middle
-      if (!this.iscircle_ && this.get('stretch') && this.get('scale')) for (i=0; i<g.length-1; i++) {
+      if (!this.iscircle_ && !this.ispt_ && this.get('stretch') && this.get('scale')) for (i=0; i<g.length-1; i++) {
         f = new ol_Feature( { geometry: new ol_geom_Point([(g[i][0]+g[i+1][0])/2,(g[i][1]+g[i+1][1])/2]), handle:'scale', constraint:i%2?"h":"v", option:i });
         features.push(f);
       }
@@ -407,7 +442,7 @@ ol_interaction_Transform.prototype.select = function(feature, add) {
     this.selection_.push(feature);
   } else {
 	var index = this.selection_.getArray().indexOf(feature);
-	this.selection_.removeAt(index);	
+	this.selection_.removeAt(index);
   }
   this.ispt_ = (this.selection_.getLength()===1 ? (this.selection_.item(0).getGeometry().getType() == "Point") : false);
   this.iscircle_ = (this.selection_.getLength()===1 ? (this.selection_.item(0).getGeometry().getType() == "Circle") : false);
@@ -559,6 +594,19 @@ ol_interaction_Transform.prototype.setCenter = function(c) {
   return this.set('center', c);
 }
 
+function projectVectorOnVector(displacement_vector, base) {
+  var k = (displacement_vector[0] * base[0] + displacement_vector[1] * base[1]) / (base[0] * base[0] + base[1] * base[1]);
+  return [base[0] * k, base[1] * k];
+}
+
+function countVector(start, end) {
+  return [end[0] - start[0], end[1] - start[1]];
+}
+
+function movePoint(point, displacementVector) {
+  return [point[0]+displacementVector[0], point[1]+displacementVector[1]];
+}
+
 /**
  * @param {ol.MapBrowserEvent} evt Map browser event.
  * @private
@@ -566,7 +614,7 @@ ol_interaction_Transform.prototype.setCenter = function(c) {
 ol_interaction_Transform.prototype.handleDragEvent_ = function(evt) {
   if (!this._handleEvent(evt, this.features_)) return;
   var viewRotation = this.getMap().getView().getRotation();
-  var i, f, geometry;
+  var i, j, f, geometry;
   var pt0 = [this.coordinate_[0], this.coordinate_[1]];
   var pt = [evt.coordinate[0], evt.coordinate[1]];
   this.isUpdating_ = true;
@@ -628,6 +676,9 @@ ol_interaction_Transform.prototype.handleDragEvent_ = function(evt) {
         }
         center = extentCoordinates[(Number(this.opt_)+2)%4];
       }
+      var keepRectangle = (this.geoms_.length == 1 && this._isRectangle(this.geoms_[0]));
+      var stretch = this.constraint_;
+      var opt = this.opt_;
 
       var downCoordinate = this.coordinate_;
       var dragCoordinate = evt.coordinate;
@@ -643,6 +694,7 @@ ol_interaction_Transform.prototype.handleDragEvent_ = function(evt) {
 
       var scx = ((dragCoordinate)[0] - (center)[0]) / (downCoordinate[0] - (center)[0]);
       var scy = ((dragCoordinate)[1] - (center)[1]) / (downCoordinate[1] - (center)[1]);
+      var displacementVector = [dragCoordinate[0] - downCoordinate[0], (dragCoordinate)[1] - downCoordinate[1]];
 
       if (this.get('enableRotatedTransform') && viewRotation !== 0) {
         var centerPoint = new ol_geom_Point(center);
@@ -669,10 +721,71 @@ ol_interaction_Transform.prototype.handleDragEvent_ = function(evt) {
         geometry.applyTransform(function(g1, g2, dim) {
           if (dim<2) return g2;
 
-          for (var j=0; j<g1.length; j+=dim) {
-            if (scx!=1) g2[j] = center[0] + (g1[j]-center[0])*scx;
-            if (scy!=1) g2[j+1] = center[1] + (g1[j+1]-center[1])*scy;
+          if (!keepRectangle) {
+            for (j=0; j<g1.length; j+=dim) {
+              if (scx!=1) g2[j] = center[0] + (g1[j]-center[0])*scx;
+              if (scy!=1) g2[j+1] = center[1] + (g1[j+1]-center[1])*scy;
+            }
+          } else {
+            var pointArray = [[6], [0, 8], [2], [4]]
+            var pointA = [g1[0], g1[1]];
+            var pointB = [g1[2], g1[3]];
+            var pointC = [g1[4], g1[5]];
+            var pointD = [g1[6], g1[7]];
+            var pointA1 = [g1[8], g1[9]];
+
+            if (stretch) {
+              var base = (opt % 2 === 0) ? countVector(pointA, pointB) : countVector(pointD, pointA);
+              var projectedVector = projectVectorOnVector(displacementVector, base);
+              var nextIndex = opt+1 < pointArray.length ? opt+1 : 0;
+              var coordsToChange = [...pointArray[opt], ...pointArray[nextIndex]];
+
+              for (j = 0; j < g1.length; j += dim) {
+                  g2[j] = coordsToChange.includes(j) ? g1[j] + projectedVector[0] : g1[j];
+                  g2[j + 1] = coordsToChange.includes(j) ? g1[j + 1] + projectedVector[1] : g1[j + 1];
+              }
+            } else {
+              var projectedLeft, projectedRight;
+              switch (opt) {
+                case 0:
+                  displacementVector = countVector(pointD, dragCoordinate);
+                  projectedLeft = projectVectorOnVector(displacementVector, countVector(pointC, pointD));
+                  projectedRight = projectVectorOnVector(displacementVector, countVector(pointA, pointD));
+                  [g2[0], g2[1]] = movePoint(pointA, projectedLeft);
+                  [g2[4], g2[5]] = movePoint(pointC, projectedRight);
+                  [g2[6], g2[7]] = movePoint(pointD, displacementVector);
+                  [g2[8], g2[9]] = movePoint(pointA1, projectedLeft);
+                  break;
+                case 1:
+                  displacementVector = countVector(pointA, dragCoordinate);
+                  projectedLeft = projectVectorOnVector(displacementVector, countVector(pointD, pointA));
+                  projectedRight = projectVectorOnVector(displacementVector, countVector(pointB, pointA));
+                  [g2[0], g2[1]] = movePoint(pointA, displacementVector);
+                  [g2[2], g2[3]] = movePoint(pointB, projectedLeft);
+                  [g2[6], g2[7]] = movePoint(pointD, projectedRight);
+                  [g2[8], g2[9]] = movePoint(pointA1, displacementVector);
+                  break;
+                case 2:
+                  displacementVector = countVector(pointB, dragCoordinate);
+                  projectedLeft = projectVectorOnVector(displacementVector, countVector(pointA, pointB));
+                  projectedRight = projectVectorOnVector(displacementVector, countVector(pointC, pointB));
+                  [g2[0], g2[1]] = movePoint(pointA, projectedRight);
+                  [g2[2], g2[3]] = movePoint(pointB, displacementVector);
+                  [g2[4], g2[5]] = movePoint(pointC, projectedLeft);
+                  [g2[8], g2[9]] = movePoint(pointA1, projectedRight);
+                  break;
+                case 3:
+                  displacementVector = countVector(pointC, dragCoordinate);
+                  projectedLeft = projectVectorOnVector(displacementVector, countVector(pointB, pointC));
+                  projectedRight = projectVectorOnVector(displacementVector, countVector(pointD, pointC));
+                  [g2[2], g2[3]] = movePoint(pointB, projectedRight);
+                  [g2[4], g2[5]] = movePoint(pointC, displacementVector);
+                  [g2[6], g2[7]] = movePoint(pointD, projectedLeft);
+                  break;
+              }
+            }
           }
+
           // bug: ol, bad calculation circle geom extent
           if (geometry.getType() == 'Circle') geometry.setCenterAndRadius(geometry.getCenter(), geometry.getRadius());
           return g2;
@@ -755,5 +868,17 @@ ol_interaction_Transform.prototype.handleUpEvent_ = function(evt) {
 ol_interaction_Transform.prototype.getFeatures = function() {
   return this.selection_;
 };
+
+/** Set the point radius to calculate handles on points
+ *  @param {number|Array<number>|function} [pointRadius=0] radius for points or a function that takes a feature and returns the radius (or [radiusX, radiusY]). If not null show handles to transform the points
+ */
+ol_interaction_Transform.prototype.setPointRadius = function(pointRadius) {
+  if (typeof(pointRadius)==='function') {
+    this._pointRadius = pointRadius;
+  } else {
+    this._pointRadius = function(){ return pointRadius };
+  }
+};
+
 
 export default ol_interaction_Transform
